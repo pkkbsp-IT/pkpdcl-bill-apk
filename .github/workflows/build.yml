@@ -62,21 +62,10 @@ jobs:
         run: |
           set -o pipefail
           yes | buildozer -v android debug 2>&1 | tee build.log || {
-            FAILED_URL=$(grep -oE "https?://[^'\" )>]+" build.log | tail -n 1 || true)
-            if [ -n "$FAILED_URL" ]; then
-              echo "=== RETRYING FAILED DOWNLOAD WITH CURL: $FAILED_URL ==="
-              FNAME=$(basename "$FAILED_URL")
-              mkdir -p ~/.buildozer/android/platform/packages
-              curl -fsSL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" "$FAILED_URL" -o "/tmp/$FNAME" || true
-              if [ -s "/tmp/$FNAME" ]; then
-                find ~/.buildozer/android/platform -type d -name "packages" -exec cp "/tmp/$FNAME" "{}/" \; 2>/dev/null || true
-                yes | buildozer -v android debug 2>&1 | tee build_retry.log && exit 0
-              fi
-            fi
             echo "=== 403 / DOWNLOAD URL LINES ==="
-            grep -iE "403|Downloading |http" build.log | tail -n 30 || true
-            echo "=== LAST 80 LINES OF BUILD LOG ==="
-            tail -n 80 build.log
+            grep -iE "403|Downloading |https?://" build.log | tail -n 30 || true
+            echo "=== LAST 60 LINES BEFORE ENV ==="
+            grep -n "ENVIRONMENT:" build.log | head -n 1 | cut -d: -f1 | xargs -I{} awk 'NR>={}-60 && NR<={}' build.log || tail -n 60 build.log
             exit 1
           }
 
