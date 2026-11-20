@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - master
   workflow_dispatch:
 
 concurrency:
@@ -16,93 +15,31 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      DEBIAN_FRONTEND: "noninteractive"
       GRADLE_OPTS: "-Dorg.gradle.daemon=false"
       BUILDOZER_WARN_ON_ROOT: "0"
-      ANDROID_HOME: "/home/runner/.buildozer/android/platform/android-sdk"
-      ANDROID_SDK_ROOT: "/home/runner/.buildozer/android/platform/android-sdk"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Remove reportlab from buildozer.spec
+      - name: Clean reportlab from buildozer.spec
         run: |
           if [ -f buildozer.spec ]; then
-            python3 - <<'PYEOF'
-with open("buildozer.spec", "r", encoding="utf-8", errors="ignore") as f:
-    lines = f.readlines()
-
-out = []
-for line in lines:
-    if line.lstrip().startswith("requirements"):
-        prefix, sep, val = line.partition("=")
-        if sep:
-            items = [
-                x.strip()
-                for x in val.split(",")
-                if x.strip() and x.strip().lower() != "reportlab"
-            ]
-            line = prefix + "= " + ",".join(items) + "\n"
-    out.append(line)
-
-with open("buildozer.spec", "w", encoding="utf-8") as f:
-    f.writelines(out)
-PYEOF
-            grep -E "^requirements" buildozer.spec || true
+            sed -i 's/reportlab//g' buildozer.spec
+            sed -i 's/,,/,/g' buildozer.spec
           fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
-      - name: Install system packages
+      - name: Install dependencies
         run: |
-          sudo apt-get -o Acquire::Retries=3 update -qq
-          sudo apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends \
-            git zip unzip curl openjdk-17-jdk python3-pip autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev \
-            libssl-dev build-essential libsqlite3-dev sqlite3 bzip2 libbz2-dev \
-            libreadline-dev libgdbm-dev liblzma-dev tk-dev uuid-dev
-
-      - name: Prepare Android SDK and sdkmanager
-        run: |
-          SDK_DIR="/home/runner/.buildozer/android/platform/android-sdk"
-          SYS_SDK="/usr/local/lib/android/sdk"
-          mkdir -p "$SDK_DIR/tools/bin" "$SDK_DIR/cmdline-tools"
-
-          if [ -d "$SYS_SDK" ]; then
-            for sub in platform-tools platforms build-tools ndk; do
-              if [ -d "$SYS_SDK/$sub" ] && [ ! -e "$SDK_DIR/$sub" ]; then
-                ln -sfn "$SYS_SDK/$sub" "$SDK_DIR/$sub"
-              fi
-            done
-          fi
-
-          FOUND_SDKM=$(find "$SYS_SDK" "$SDK_DIR" -name "sdkmanager" -type f 2>/dev/null | head -n 1 || true)
-
-          if [ -z "$FOUND_SDKM" ]; then
-            curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
-            unzip -qo /tmp/cmdtools.zip -d /tmp/cmdtools_extracted
-            rm -rf "$SDK_DIR/cmdline-tools/latest"
-            mv /tmp/cmdtools_extracted/cmdline-tools "$SDK_DIR/cmdline-tools/latest"
-            FOUND_SDKM="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
-            chmod +x "$FOUND_SDKM"
-            rm -rf /tmp/cmdtools.zip /tmp/cmdtools_extracted
-          fi
-
-          ln -sf "$FOUND_SDKM" "$SDK_DIR/tools/bin/sdkmanager"
-          chmod +x "$SDK_DIR/tools/bin/sdkmanager"
-
-          yes | "$SDK_DIR/tools/bin/sdkmanager" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
-          yes | "$SDK_DIR/tools/bin/sdkmanager" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null 2>&1 || true
-          ls -la "$SDK_DIR/tools/bin/sdkmanager"
-
-      - name: Install Buildozer and Cython
-        run: |
-          python -m pip install -q --upgrade pip
-          pip install -q buildozer==1.6.0 cython==0.29.36 virtualenv setuptools
+          sudo apt-get update -y
+          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+          pip install --upgrade pip
+          pip install buildozer==1.6.0 cython==0.29.36 virtualenv
 
       - name: Cache Buildozer and Gradle
         uses: actions/cache@v4
@@ -115,13 +52,7 @@ PYEOF
             buildozer-${{ runner.os }}-
 
       - name: Build debug APK
-        run: |
-          set -o pipefail
-          yes | buildozer android debug 2>&1 | tee build.log || {
-            echo "=== LAST ERRORS ==="
-            grep -iE "403|Error:|Command failed|Exception|urllib\.error|sdkmanager" build.log | tail -n 30 || true
-            exit 1
-          }
+        run: yes | buildozer android debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
