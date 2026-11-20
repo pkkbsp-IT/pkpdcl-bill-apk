@@ -47,7 +47,7 @@ jobs:
             mkdir -p "$SDK_DIR/tools/bin"
             ln -sf "$CMD_SDK" "$SDK_DIR/tools/bin/sdkmanager"
             yes | "$CMD_SDK" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
-            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null 2>&1 || true
+            yes | "$SDK_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null 2>&1 || true
           fi
 
       - name: Install Buildozer and Cython
