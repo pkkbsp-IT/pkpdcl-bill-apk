@@ -50,7 +50,7 @@ jobs:
             mkdir -p "$SDK_DIR/tools/bin"
             ln -sf "$CMD_SDK" "$SDK_DIR/tools/bin/sdkmanager"
             yes | "$CMD_SDK" --sdk_root="$SDK_DIR" --licenses || true
-            yes | "$SDK_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
+            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
           fi
 
       - name: Install Buildozer and Cython
@@ -61,45 +61,46 @@ jobs:
       - name: Configure global urllib User-Agent via sitecustomize
         run: |
           python - <<'EOF'
-          import site, os
+          import base64, os, site
 
-          ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-          code = f"""import urllib.request as _ur
+          payload = """import tempfile, urllib.request as _ur
 
-_UA = {ua!r}
-_orig_urlopen = _ur.urlopen
-_orig_urlretrieve = _ur.urlretrieve
+          _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+          _orig_urlopen = _ur.urlopen
+          _orig_urlretrieve = _ur.urlretrieve
 
-def _wrap_req(url):
-    if isinstance(url, str):
-        return _ur.Request(url, headers={{"User-Agent": _UA}})
-    if hasattr(url, "add_header") and not url.has_header("User-agent"):
-        url.add_header("User-Agent", _UA)
-    return url
+          def _wrap_req(url):
+              if isinstance(url, str):
+                  return _ur.Request(url, headers={"User-Agent": _UA})
+              if hasattr(url, "add_header") and not url.has_header("User-agent"):
+                  url.add_header("User-Agent", _UA)
+              return url
 
-def _ua_urlopen(url, *args, **kwargs):
-    return _orig_urlopen(_wrap_req(url), *args, **kwargs)
+          def _ua_urlopen(url, *args, **kwargs):
+              return _orig_urlopen(_wrap_req(url), *args, **kwargs)
 
-def _ua_urlretrieve(url, filename=None, reporthook=None, data=None):
-    opener = _ur.build_opener()
-    opener.addheaders = [("User-Agent", _UA)]
-    resp = opener.open(_wrap_req(url), data=data)
-    if filename is None:
-        import tempfile
-        tf = tempfile.NamedTemporaryFile(delete=False)
-        filename = tf.name
-        tf.close()
-    with open(filename, "wb") as out:
-        while True:
-            chunk = resp.read(65536)
-            if not chunk:
-                break
-            out.write(chunk)
-    return filename, resp.headers
+          def _ua_urlretrieve(url, filename=None, reporthook=None, data=None):
+              opener = _ur.build_opener()
+              opener.addheaders = [("User-Agent", _UA)]
+              resp = opener.open(_wrap_req(url), data=data)
+              if filename is None:
+                  tf = tempfile.NamedTemporaryFile(delete=False)
+                  filename = tf.name
+                  tf.close()
+              with open(filename, "wb") as out:
+                  while True:
+                      chunk = resp.read(65536)
+                      if not chunk:
+                          break
+                      out.write(chunk)
+              return filename, resp.headers
 
-_ur.urlopen = _ua_urlopen
-_ur.urlretrieve = _ua_urlretrieve
-"""
+          _ur.urlopen = _ua_urlopen
+          _ur.urlretrieve = _ua_urlretrieve
+          """
+
+          b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+          loader = f"import base64; exec(base64.b64decode({b64!r}).decode('utf-8'))\n"
 
           targets = set(site.getsitepackages())
           user_site = site.getusersitepackages()
@@ -110,7 +111,7 @@ _ur.urlretrieve = _ua_urlretrieve
               os.makedirs(d, exist_ok=True)
               p = os.path.join(d, "sitecustomize.py")
               with open(p, "w", encoding="utf-8") as f:
-                  f.write(code)
+                  f.write(loader)
               print("Wrote:", p)
           EOF
 
