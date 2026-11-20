@@ -58,71 +58,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install buildozer==1.6.0 cython==0.29.36 virtualenv setuptools
 
-      - name: Configure global urllib User-Agent via sitecustomize
-        run: |
-          python - <<'EOF'
-          import base64, os, site
-
-          payload = """import tempfile, urllib.request as _ur
-
-          _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-          _orig_urlopen = _ur.urlopen
-          _orig_urlretrieve = _ur.urlretrieve
-
-          def _wrap_req(url):
-              if isinstance(url, str):
-                  return _ur.Request(url, headers={"User-Agent": _UA})
-              if hasattr(url, "add_header") and not url.has_header("User-agent"):
-                  url.add_header("User-Agent", _UA)
-              return url
-
-          def _ua_urlopen(url, *args, **kwargs):
-              return _orig_urlopen(_wrap_req(url), *args, **kwargs)
-
-          def _ua_urlretrieve(url, filename=None, reporthook=None, data=None):
-              opener = _ur.build_opener()
-              opener.addheaders = [("User-Agent", _UA)]
-              resp = opener.open(_wrap_req(url), data=data)
-              if filename is None:
-                  tf = tempfile.NamedTemporaryFile(delete=False)
-                  filename = tf.name
-                  tf.close()
-              with open(filename, "wb") as out:
-                  while True:
-                      chunk = resp.read(65536)
-                      if not chunk:
-                          break
-                      out.write(chunk)
-              return filename, resp.headers
-
-          _ur.urlopen = _ua_urlopen
-          _ur.urlretrieve = _ua_urlretrieve
-          """
-
-          b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-          loader = f"import base64; exec(base64.b64decode({b64!r}).decode('utf-8'))\n"
-
-          targets = set(site.getsitepackages())
-          user_site = site.getusersitepackages()
-          if user_site:
-              targets.add(user_site)
-
-          for d in targets:
-              os.makedirs(d, exist_ok=True)
-              p = os.path.join(d, "sitecustomize.py")
-              with open(p, "w", encoding="utf-8") as f:
-                  f.write(loader)
-              print("Wrote:", p)
-          EOF
-
       - name: Build debug APK
         run: |
           set -o pipefail
           yes | buildozer -v android debug 2>&1 | tee build.log || {
-            echo "=== 403 / DOWNLOAD URL LINES ==="
-            grep -iE "403|Downloading |https?://" build.log | tail -n 30 || true
-            echo "=== LAST 60 LINES BEFORE ENV ==="
-            grep -n "ENVIRONMENT:" build.log | head -n 1 | cut -d: -f1 | xargs -I{} awk 'NR>={}-60 && NR<={}' build.log || tail -n 60 build.log
+            echo "=== EXACT FAILING URLS & LINES ==="
+            grep -iE "403|Downloading |https?://|HTTP Error" build.log | tail -n 30 || true
+            echo "=== LAST 50 LINES BEFORE ENV ==="
+            grep -n "ENVIRONMENT:" build.log | head -n 1 | cut -d: -f1 | xargs -I{} awk 'NR>={}-50 && NR<={}' build.log || tail -n 50 build.log
             exit 1
           }
 
