@@ -50,7 +50,7 @@ jobs:
             mkdir -p "$SDK_DIR/tools/bin"
             ln -sf "$CMD_SDK" "$SDK_DIR/tools/bin/sdkmanager"
             yes | "$CMD_SDK" --sdk_root="$SDK_DIR" --licenses || true
-            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
+            yes | "$SDK_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
           fi
 
       - name: Install Buildozer and Cython
@@ -58,29 +58,60 @@ jobs:
           python -m pip install --upgrade pip
           pip install buildozer==1.6.0 cython==0.29.36 virtualenv setuptools
 
-      - name: Patch p4a downloader User-Agent for 403
+      - name: Configure global urllib User-Agent via sitecustomize
         run: |
           python - <<'EOF'
-          import glob, os
+          import site, os
 
-          for path in glob.glob(os.path.expanduser("~/.buildozer/android/platform/python-for-android/pythonforandroid/toolchain.py")) + glob.glob("**/pythonforandroid/toolchain.py", recursive=True):
-              with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                  src = f.read()
-              if "Mozilla/5.0" not in src and "urlopen" in src:
-                  hook = (
-                      "import urllib.request as _ur\n"
-                      "_orig_urlopen = _ur.urlopen\n"
-                      "def _ua_urlopen(url, *args, **kwargs):\n"
-                      "    if isinstance(url, str):\n"
-                      "        url = _ur.Request(url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'})\n"
-                      "    elif hasattr(url, 'add_header') and not url.has_header('User-agent'):\n"
-                      "        url.add_header('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')\n"
-                      "    return _orig_urlopen(url, *args, **kwargs)\n"
-                      "_ur.urlopen = _ua_urlopen\n"
-                  )
-                  with open(path, "w", encoding="utf-8") as f:
-                      f.write(hook + src)
-                  print("Patched:", path)
+          ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+          code = f"""import urllib.request as _ur
+
+_UA = {ua!r}
+_orig_urlopen = _ur.urlopen
+_orig_urlretrieve = _ur.urlretrieve
+
+def _wrap_req(url):
+    if isinstance(url, str):
+        return _ur.Request(url, headers={{"User-Agent": _UA}})
+    if hasattr(url, "add_header") and not url.has_header("User-agent"):
+        url.add_header("User-Agent", _UA)
+    return url
+
+def _ua_urlopen(url, *args, **kwargs):
+    return _orig_urlopen(_wrap_req(url), *args, **kwargs)
+
+def _ua_urlretrieve(url, filename=None, reporthook=None, data=None):
+    opener = _ur.build_opener()
+    opener.addheaders = [("User-Agent", _UA)]
+    resp = opener.open(_wrap_req(url), data=data)
+    if filename is None:
+        import tempfile
+        tf = tempfile.NamedTemporaryFile(delete=False)
+        filename = tf.name
+        tf.close()
+    with open(filename, "wb") as out:
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            out.write(chunk)
+    return filename, resp.headers
+
+_ur.urlopen = _ua_urlopen
+_ur.urlretrieve = _ua_urlretrieve
+"""
+
+          targets = set(site.getsitepackages())
+          user_site = site.getusersitepackages()
+          if user_site:
+              targets.add(user_site)
+
+          for d in targets:
+              os.makedirs(d, exist_ok=True)
+              p = os.path.join(d, "sitecustomize.py")
+              with open(p, "w", encoding="utf-8") as f:
+                  f.write(code)
+              print("Wrote:", p)
           EOF
 
       - name: Build debug APK
