@@ -1,4 +1,10 @@
- - name: Build debug APK
-   run: |
-     yes | buildozer android debug || true
-     buildozer android debug
+      - name: Build debug APK
+        run: |
+          set -o pipefail
+          yes | buildozer -v android debug 2>&1 | tee build.log || {
+            echo "=== LAST 120 LINES OF BUILD LOG ==="
+            tail -n 120 build.log
+            echo "=== ERROR / FAILED / EXCEPTION LINES ==="
+            grep -iE "error:|failed|exception|no module|not found|command failed" build.log | tail -n 50 || true
+            exit 1
+          }
