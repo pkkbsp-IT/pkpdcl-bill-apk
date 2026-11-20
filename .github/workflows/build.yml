@@ -30,113 +30,49 @@ jobs:
 
       - name: Install system packages
         run: |
-          for i in 1 2 3 4 5; do
-            sudo apt-get update --fix-missing && \
-            sudo apt-get install -y --fix-missing \
-              git zip unzip curl wget openjdk-17-jdk python3-pip autoconf libtool pkg-config \
-              zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev \
-              libssl-dev build-essential libsqlite3-dev sqlite3 bzip2 libbz2-dev \
-              libreadline-dev libgdbm-dev liblzma-dev tk-dev uuid-dev && break || sleep 10
-          done
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            git zip unzip curl openjdk-17-jdk python3-pip autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev \
+            libssl-dev build-essential libsqlite3-dev sqlite3 bzip2 libbz2-dev \
+            libreadline-dev libgdbm-dev liblzma-dev tk-dev uuid-dev
 
-      - name: Prepare Android SDK in Buildozer folder
+      - name: Prepare Android SDK
         run: |
           SDK_DIR="/usr/local/lib/android/sdk"
           mkdir -p ~/.buildozer/android/platform
           ln -sfn "$SDK_DIR" ~/.buildozer/android/platform/android-sdk
-
           CMD_SDK=$(find "$SDK_DIR" -name "sdkmanager" -type f 2>/dev/null | head -n 1)
           if [ -n "$CMD_SDK" ]; then
             mkdir -p "$SDK_DIR/tools/bin"
             ln -sf "$CMD_SDK" "$SDK_DIR/tools/bin/sdkmanager"
-            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" --licenses || true
-            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" || true
+            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
+            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null 2>&1 || true
           fi
 
       - name: Install Buildozer and Cython
         run: |
-          python -m pip install --upgrade pip
-          pip install buildozer==1.6.0 cython==0.29.36 virtualenv setuptools
+          python -m pip install -q --upgrade pip
+          pip install -q buildozer==1.6.0 cython==0.29.36 virtualenv setuptools
 
-      - name: Build debug APK with auto-403 recovery
+      - name: Cache Buildozer and Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            ~/.gradle
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Build debug APK
         run: |
           set -o pipefail
-
-          # Ensure p4a exists before patching
-          yes | buildozer android debug --dry-run >/dev/null 2>&1 || true
-
-          python - <<'EOF'
-          import glob, os
-
-          ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-          patch_code = (
-              "import urllib.request as _ur\n"
-              "_UA = " + repr(ua) + "\n"
-              "_orig_urlopen = _ur.urlopen\n"
-              "def _ua_urlopen(url, *args, **kwargs):\n"
-              "    if isinstance(url, str):\n"
-              "        url = _ur.Request(url, headers={'User-Agent': _UA})\n"
-              "    elif hasattr(url, 'add_header') and not url.has_header('User-agent'):\n"
-              "        url.add_header('User-Agent', _UA)\n"
-              "    return _orig_urlopen(url, *args, **kwargs)\n"
-              "_ur.urlopen = _ua_urlopen\n"
-          )
-
-          for p in glob.glob(os.path.expanduser("~/.buildozer/android/platform/python-for-android/pythonforandroid/**/*.py"), recursive=True):
-              try:
-                  with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                      txt = f.read()
-                  if "urlopen" in txt and "_ua_urlopen" not in txt:
-                      with open(p, "w", encoding="utf-8") as f:
-                          f.write(patch_code + txt)
-              except Exception:
-                  pass
-          EOF
-
-          for attempt in 1 2 3; do
-            echo "=== BUILD ATTEMPT $attempt ==="
-            if yes | buildozer -v android debug 2>&1 | tee build.log; then
-              exit 0
-            fi
-
-            if grep -q "hg.reportlab.com" build.log && grep -q "403" build.log; then
-              echo "=== FIXING REPORTLAB 403 BY USING PIP WHEEL ==="
-              sed -i 's/,reportlab//g; s/reportlab,//g; s/^requirements = .*reportlab.*/requirements = python3,kivy==2.3.0,sdl2,pillow,openpyxl,qrcode,pyjnius/' buildozer.spec || true
-              if [ -f main.py ]; then
-                python - <<'EOF'
-                with open("main.py", "r", encoding="utf-8", errors="ignore") as f:
-                    s = f.read()
-                if "import reportlab" in s or "from reportlab" in s:
-                    guard = (
-                        "try:\n"
-                        "    import reportlab\n"
-                        "except ImportError:\n"
-                        "    reportlab = None\n"
-                    )
-                    with open("main.py", "w", encoding="utf-8") as f:
-                        f.write(guard + s)
-                EOF
-              fi
-              continue
-            fi
-
-            FAILED_URL=$(grep -oE "https?://[^'\" )>\]+" build.log | tail -n 1 || true)
-            echo "=== LAST URL: $FAILED_URL ==="
-            if [ -n "$FAILED_URL" ]; then
-              FNAME=$(basename "$FAILED_URL")
-              mkdir -p /tmp/p4a_dl
-              curl -fsSL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$FAILED_URL" -o "/tmp/p4a_dl/$FNAME" || true
-              if [ -s "/tmp/p4a_dl/$FNAME" ]; then
-                find ~/.buildozer -type d -name "packages" -exec cp -f "/tmp/p4a_dl/$FNAME" "{}/" \; 2>/dev/null || true
-                find ~/.buildozer -name ".mark-$FNAME" -delete 2>/dev/null || true
-                continue
-              fi
-            fi
-
-            echo "=== ERROR SUMMARY ==="
-            grep -iE "403|Error:|failed|Exception" build.log | tail -n 25 || true
+          yes | buildozer android debug 2>&1 | tee build.log || {
+            echo "=== LAST ERRORS ==="
+            grep -iE "403|Error:|Command failed|Exception" build.log | tail -n 25 || true
             exit 1
-          done
+          }
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
