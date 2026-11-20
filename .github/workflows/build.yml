@@ -64,18 +64,38 @@ PYEOF
             libssl-dev build-essential libsqlite3-dev sqlite3 bzip2 libbz2-dev \
             libreadline-dev libgdbm-dev liblzma-dev tk-dev uuid-dev
 
-      - name: Prepare Android SDK
+      - name: Prepare Android SDK and sdkmanager
         run: |
-          SDK_DIR="/usr/local/lib/android/sdk"
-          mkdir -p ~/.buildozer/android/platform
-          ln -sfn "$SDK_DIR" ~/.buildozer/android/platform/android-sdk
-          CMD_SDK=$(find "$SDK_DIR" -name "sdkmanager" -type f 2>/dev/null | head -n 1)
-          if [ -n "$CMD_SDK" ]; then
-            mkdir -p "$SDK_DIR/tools/bin"
-            ln -sf "$CMD_SDK" "$SDK_DIR/tools/bin/sdkmanager"
-            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
-            yes | "$CMD_SDK" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null 2>&1 || true
+          SDK_DIR="/home/runner/.buildozer/android/platform/android-sdk"
+          SYS_SDK="/usr/local/lib/android/sdk"
+          mkdir -p "$SDK_DIR/tools/bin" "$SDK_DIR/cmdline-tools"
+
+          if [ -d "$SYS_SDK" ]; then
+            for sub in platform-tools platforms build-tools ndk; do
+              if [ -d "$SYS_SDK/$sub" ] && [ ! -e "$SDK_DIR/$sub" ]; then
+                ln -sfn "$SYS_SDK/$sub" "$SDK_DIR/$sub"
+              fi
+            done
           fi
+
+          FOUND_SDKM=$(find "$SYS_SDK" "$SDK_DIR" -name "sdkmanager" -type f 2>/dev/null | head -n 1 || true)
+
+          if [ -z "$FOUND_SDKM" ]; then
+            curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
+            unzip -qo /tmp/cmdtools.zip -d /tmp/cmdtools_extracted
+            rm -rf "$SDK_DIR/cmdline-tools/latest"
+            mv /tmp/cmdtools_extracted/cmdline-tools "$SDK_DIR/cmdline-tools/latest"
+            FOUND_SDKM="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+            chmod +x "$FOUND_SDKM"
+            rm -rf /tmp/cmdtools.zip /tmp/cmdtools_extracted
+          fi
+
+          ln -sf "$FOUND_SDKM" "$SDK_DIR/tools/bin/sdkmanager"
+          chmod +x "$SDK_DIR/tools/bin/sdkmanager"
+
+          yes | "$SDK_DIR/tools/bin/sdkmanager" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
+          yes | "$SDK_DIR/tools/bin/sdkmanager" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-33" "build-tools;33.0.2" >/dev/null 2>&1 || true
+          ls -la "$SDK_DIR/tools/bin/sdkmanager"
 
       - name: Install Buildozer and Cython
         run: |
@@ -97,7 +117,7 @@ PYEOF
           set -o pipefail
           yes | buildozer android debug 2>&1 | tee build.log || {
             echo "=== LAST ERRORS ==="
-            grep -iE "403|Error:|Command failed|Exception|urllib\.error" build.log | tail -n 30 || true
+            grep -iE "403|Error:|Command failed|Exception|urllib\.error|sdkmanager" build.log | tail -n 30 || true
             exit 1
           }
 
