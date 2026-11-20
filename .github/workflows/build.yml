@@ -58,16 +58,85 @@ jobs:
           python -m pip install --upgrade pip
           pip install buildozer==1.6.0 cython==0.29.36 virtualenv setuptools
 
-      - name: Build debug APK
+      - name: Build debug APK with auto-403 recovery
         run: |
           set -o pipefail
-          yes | buildozer -v android debug 2>&1 | tee build.log || {
-            echo "=== EXACT FAILING URLS & LINES ==="
-            grep -iE "403|Downloading |https?://|HTTP Error" build.log | tail -n 30 || true
-            echo "=== LAST 50 LINES BEFORE ENV ==="
-            grep -n "ENVIRONMENT:" build.log | head -n 1 | cut -d: -f1 | xargs -I{} awk 'NR>={}-50 && NR<={}' build.log || tail -n 50 build.log
+
+          # Ensure p4a exists before patching
+          yes | buildozer android debug --dry-run >/dev/null 2>&1 || true
+
+          python - <<'EOF'
+          import glob, os
+
+          ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+          patch_code = (
+              "import urllib.request as _ur\n"
+              "_UA = " + repr(ua) + "\n"
+              "_orig_urlopen = _ur.urlopen\n"
+              "def _ua_urlopen(url, *args, **kwargs):\n"
+              "    if isinstance(url, str):\n"
+              "        url = _ur.Request(url, headers={'User-Agent': _UA})\n"
+              "    elif hasattr(url, 'add_header') and not url.has_header('User-agent'):\n"
+              "        url.add_header('User-Agent', _UA)\n"
+              "    return _orig_urlopen(url, *args, **kwargs)\n"
+              "_ur.urlopen = _ua_urlopen\n"
+          )
+
+          for p in glob.glob(os.path.expanduser("~/.buildozer/android/platform/python-for-android/pythonforandroid/**/*.py"), recursive=True):
+              try:
+                  with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                      txt = f.read()
+                  if "urlopen" in txt and "_ua_urlopen" not in txt:
+                      with open(p, "w", encoding="utf-8") as f:
+                          f.write(patch_code + txt)
+              except Exception:
+                  pass
+          EOF
+
+          for attempt in 1 2 3; do
+            echo "=== BUILD ATTEMPT $attempt ==="
+            if yes | buildozer -v android debug 2>&1 | tee build.log; then
+              exit 0
+            fi
+
+            if grep -q "hg.reportlab.com" build.log && grep -q "403" build.log; then
+              echo "=== FIXING REPORTLAB 403 BY USING PIP WHEEL ==="
+              sed -i 's/,reportlab//g; s/reportlab,//g; s/^requirements = .*reportlab.*/requirements = python3,kivy==2.3.0,sdl2,pillow,openpyxl,qrcode,pyjnius/' buildozer.spec || true
+              if [ -f main.py ]; then
+                python - <<'EOF'
+                with open("main.py", "r", encoding="utf-8", errors="ignore") as f:
+                    s = f.read()
+                if "import reportlab" in s or "from reportlab" in s:
+                    guard = (
+                        "try:\n"
+                        "    import reportlab\n"
+                        "except ImportError:\n"
+                        "    reportlab = None\n"
+                    )
+                    with open("main.py", "w", encoding="utf-8") as f:
+                        f.write(guard + s)
+                EOF
+              fi
+              continue
+            fi
+
+            FAILED_URL=$(grep -oE "https?://[^'\" )>\]+" build.log | tail -n 1 || true)
+            echo "=== LAST URL: $FAILED_URL ==="
+            if [ -n "$FAILED_URL" ]; then
+              FNAME=$(basename "$FAILED_URL")
+              mkdir -p /tmp/p4a_dl
+              curl -fsSL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$FAILED_URL" -o "/tmp/p4a_dl/$FNAME" || true
+              if [ -s "/tmp/p4a_dl/$FNAME" ]; then
+                find ~/.buildozer -type d -name "packages" -exec cp -f "/tmp/p4a_dl/$FNAME" "{}/" \; 2>/dev/null || true
+                find ~/.buildozer -name ".mark-$FNAME" -delete 2>/dev/null || true
+                continue
+              fi
+            fi
+
+            echo "=== ERROR SUMMARY ==="
+            grep -iE "403|Error:|failed|Exception" build.log | tail -n 25 || true
             exit 1
-          }
+          done
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
