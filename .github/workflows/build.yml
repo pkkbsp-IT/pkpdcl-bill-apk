@@ -23,11 +23,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Clean reportlab from buildozer.spec
+      - name: Sanitize buildozer.spec
         run: |
           if [ -f buildozer.spec ]; then
             sed -i 's/reportlab//g' buildozer.spec
-            sed -i 's/,,/,/g' buildozer.spec
+            sed -i 's/openpyxl//g' buildozer.spec
+            sed -i 's/et_xmlfile//g' buildozer.spec
+            sed -i 's/qrcode//g' buildozer.spec
+            sed -i 's/,,*/,/g' buildozer.spec
+            sed -i 's/requirements = ,/requirements = /g' buildozer.spec
           fi
 
       - name: Set up Python
@@ -57,20 +61,11 @@ jobs:
           set -o pipefail
           buildozer android debug 2>&1 | tee build.log
 
-      - name: Show filtered errors on failure
+      - name: Show last error context on failure
         if: failure()
         run: |
-          echo "===== FILTERED ERRORS ====="
-          grep -inE "error:|exception|traceback|failed|no such file|undefined reference|command not found" build.log | tail -n 60 || true
-          echo "===== BEFORE ENV DUMP ====="
-          grep -B 25 -m 1 "Buildozer failed to execute the last command" build.log || true
-
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-failure-log
-          path: build.log
+          echo "===== LAST 40 LINES BEFORE END ====="
+          grep -B 35 -m 1 "Buildozer failed to execute the last command" build.log || tail -n 40 build.log
 
       - name: Upload APK artifact
         if: success()
