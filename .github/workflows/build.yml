@@ -1,108 +1,75 @@
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
 
-name: Build PKPDCL APK
 
-on:
-  push:
-    branches:
-      - main
-      - master
+class BillCalculatorLayout(BoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(orientation="vertical", padding=24, spacing=14, **kwargs)
 
-  workflow_dispatch:
+        self.add_widget(
+            Label(
+                text="PKPDCL Bill Calculator",
+                font_size="24sp",
+                size_hint_y=None,
+                height=60,
+            )
+        )
 
-permissions:
-  contents: read
+        self.units_input = TextInput(
+            hint_text="Units enter karein (e.g. 120)",
+            input_filter="float",
+            multiline=False,
+            font_size="18sp",
+            size_hint_y=None,
+            height=60,
+        )
+        self.add_widget(self.units_input)
 
-concurrency:
-  group: android-apk-${{ github.ref }}
-  cancel-in-progress: false
+        self.rate_input = TextInput(
+            hint_text="Rate per unit (e.g. 6.5)",
+            input_filter="float",
+            multiline=False,
+            font_size="18sp",
+            size_hint_y=None,
+            height=60,
+        )
+        self.add_widget(self.rate_input)
 
-jobs:
-  build:
-    name: Build Android APK
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
+        calc_btn = Button(
+            text="Calculate Bill",
+            font_size="18sp",
+            size_hint_y=None,
+            height=65,
+        )
+        calc_btn.bind(on_press=self.calculate_bill)
+        self.add_widget(calc_btn)
 
-    env:
-      BUILDOZER_WARN_ON_ROOT: "0"
-      GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+        self.result_label = Label(
+            text="Total Bill: ₹0.00",
+            font_size="22sp",
+            size_hint_y=None,
+            height=70,
+        )
+        self.add_widget(self.result_label)
 
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+    def calculate_bill(self, instance):
+        try:
+            units = float(self.units_input.text or 0)
+            rate = float(self.rate_input.text or 0)
+            total = units * rate
+            self.result_label.text = f"Total Bill: ₹{total:.2f}"
+        except ValueError:
+            self.result_label.text = "Sahi number dalein"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+class PKPDCLBillApp(App):
+    def build(self):
+        self.title = "PKPDCL Bill App"
+        return BillCalculatorLayout()
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip \
-            build-essential \
-            autoconf automake libtool \
-            pkg-config \
-            zlib1g-dev libffi-dev \
-            libssl-dev \
-            libsqlite3-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libtinfo6 \
-            cmake \
-            libltdl-dev \
-            libtool-bin \
-            gettext \
-            wget
 
-      - name: Install Build Tools
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install Cython==0.29.36
-          python -m pip install buildozer==1.6.0
-
-      - name: Check Project Files
-        run: |
-          test -f main.py
-          test -f buildozer.spec
-          test -f pkpdcl_logo.png
-          echo "All required project files found."
-
-      - name: Show Build Configuration
-        run: |
-          echo "Python version:"
-          python --version
-          echo "Buildozer version:"
-          buildozer --version
-          echo "Build configuration:"
-          cat buildozer.spec
-
-      - name: Build Debug APK
-        run: |
-          buildozer android debug
-
-      - name: Upload APK Artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PKPDCL-Spot-Billing-APK
-          path: bin/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Build Logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PKPDCL-Build-Logs
-          path: |
-            .buildozer/android/platform/build-*/dists/*/build.log
-            .buildozer/android/platform/build-*/dists/*/gradle.log
-          if-no-files-found: ignore
-          retention-days: 7
+if __name__ == "__main__":
+    PKPDCLBillApp().run()
