@@ -57,11 +57,20 @@ jobs:
           set -o pipefail
           buildozer android debug 2>&1 | tee build.log
 
-      - name: Show last log lines on failure
+      - name: Show filtered errors on failure
         if: failure()
         run: |
-          echo "===== LAST 100 LINES OF BUILD LOG ====="
-          tail -n 100 build.log
+          echo "===== FILTERED ERRORS ====="
+          grep -inE "error:|exception|traceback|failed|no such file|undefined reference|command not found" build.log | tail -n 60 || true
+          echo "===== BEFORE ENV DUMP ====="
+          grep -B 25 -m 1 "Buildozer failed to execute the last command" build.log || true
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-log
+          path: build.log
 
       - name: Upload APK artifact
         if: success()
