@@ -1,3 +1,4 @@
+
 name: Build Android APK
 
 on:
@@ -11,9 +12,14 @@ concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: Build PKPDCL APK
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
 
     env:
       GRADLE_OPTS: "-Dorg.gradle.daemon=false"
@@ -23,28 +29,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Sanitize buildozer.spec
-        run: |
-          if [ -f buildozer.spec ]; then
-            sed -i 's/reportlab//g' buildozer.spec
-            sed -i 's/openpyxl//g' buildozer.spec
-            sed -i 's/et_xmlfile//g' buildozer.spec
-            sed -i 's/qrcode//g' buildozer.spec
-            sed -i 's/,,*/,/g' buildozer.spec
-            sed -i 's/requirements = ,/requirements = /g' buildozer.spec
-          fi
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
-          pip install --upgrade pip
-          pip install buildozer==1.6.0 cython==0.29.36 virtualenv
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip openjdk-17-jdk \
+            autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            libtinfo5 cmake libffi-dev libssl-dev
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install buildozer==1.6.0 cython==0.29.36 virtualenv
 
       - name: Cache Buildozer and Gradle
         uses: actions/cache@v4
@@ -52,25 +54,49 @@ jobs:
           path: |
             ~/.buildozer
             ~/.gradle
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: pkpdcl-build-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-${{ runner.os }}-
+            pkpdcl-build-${{ runner.os }}-
+
+      - name: Check project files
+        run: |
+          test -f main.py
+          test -f buildozer.spec
+          echo "Project files found."
+          echo "Python version:"
+          python --version
+          echo "Java version:"
+          java -version
 
       - name: Build debug APK
         run: |
           set -o pipefail
           buildozer android debug 2>&1 | tee build.log
 
-      - name: Show last error context on failure
+      - name: Show build errors
         if: failure()
         run: |
-          echo "===== LAST 40 LINES BEFORE END ====="
-          grep -B 35 -m 1 "Buildozer failed to execute the last command" build.log || tail -n 40 build.log
+          echo "========== BUILD ERRORS =========="
+          if [ -f build.log ]; then
+            grep -niE -B 8 -A 15 \
+              'error:|fatal error:|FAILED|Exception|Traceback|not found|could not|failed' \
+              build.log | tail -n 180 || true
+            echo "========== LAST 100 LINES =========="
+            tail -n 100 build.log
+          fi
 
-      - name: Upload APK artifact
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkpdcl-build-log
+          path: build.log
+          if-no-files-found: warn
+
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
+          name: PKPDCL-Spot-Billing-APK
           path: bin/*.apk
           if-no-files-found: error
