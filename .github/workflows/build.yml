@@ -1,111 +1,109 @@
+
 name: Build PKPDCL APK
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
   workflow_dispatch:
 
 concurrency:
-  group: android-apk-${{ github.ref }}
+  group: pkpdcl-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 180
 
     env:
-      GRADLE_OPTS: "-Dorg.gradle.daemon=false"
       BUILDOZER_WARN_ON_ROOT: "0"
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx4g"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Sanitize buildozer.spec
-        run: |
-          python3 - << 'EOF'
-          import re
-          from pathlib import Path
-
-          spec_path = Path("buildozer.spec")
-          if spec_path.exists():
-              text = spec_path.read_text(encoding="utf-8")
-              blocked = {"reportlab", "openpyxl", "qrcode", "et_xmlfile"}
-
-              def clean_req(match):
-                  prefix = match.group(1)
-                  body = match.group(2)
-                  items = [x.strip() for x in re.split(r"[,\n]", body) if x.strip()]
-                  filtered = []
-                  for x in items:
-                      base = x.split("==")[0].split(">=")[0].split("<=")[0].strip().lower()
-                      if base in blocked:
-                          continue
-                      if x.strip().lower() == "kivy==2.3.0":
-                          filtered.append("kivy==2.2.1")
-                      else:
-                          filtered.append(x.strip())
-                  if not filtered:
-                      filtered = ["python3", "kivy==2.2.1", "pillow", "pyjnius"]
-                  return prefix + ", ".join(filtered)
-
-              text = re.sub(r"(requirements\s*=\s*)([^\n]+(?:\n[ \t]+[^\n]+)*)", clean_req, text)
-              spec_path.write_text(text, encoding="utf-8")
-              print("Sanitized buildozer.spec requirements:")
-              for line in text.splitlines():
-                  if line.strip().startswith("requirements"):
-                      print(" ", line)
-          EOF
-
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.10'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y git zip unzip curl ca-certificates openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
-          python3 -m pip install --upgrade pip
-          python3 -m pip install "cython<3" buildozer==1.6.0 virtualenv
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip curl \
+            autoconf automake libtool \
+            pkg-config zlib1g-dev \
+            libncurses5-dev libncursesw5-dev \
+            libtinfo5 cmake \
+            libffi-dev libssl-dev \
+            libltdl-dev gettext
 
-      - name: Cache Buildozer and Gradle
+      - name: Install Build Tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install wheel setuptools
+          python -m pip install "Cython==0.29.36"
+          python -m pip install "buildozer==1.6.0"
+          python -m pip install legacy-cgi
+
+      - name: Verify Python CGI
+        run: |
+          python -c "import cgi; print('CGI module OK')"
+
+      - name: Verify Project
+        run: |
+          test -f main.py
+          test -f buildozer.spec
+          test -f pkpdcl_logo.png
+          echo "Project files OK"
+
+      - name: Cache Android SDK and Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.buildozer
             ~/.gradle
-          key: buildozer-${{ runner.os }}-kivy221-${{ hashFiles('buildozer.spec') }}
+          key: pkpdcl-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-${{ runner.os }}-kivy221-
+            pkpdcl-v2-${{ runner.os }}-
 
-      - name: Build debug APK
+      - name: Clean Previous Build
+        run: |
+          rm -rf .buildozer/android/platform/build-arm64-v8a
+          rm -rf bin
+
+      - name: Build APK
         run: |
           set -o pipefail
-          buildozer android debug 2>&1 | tee build.log
+          buildozer -v android debug 2>&1 | tee build.log
 
-      - name: Show build errors
-        if: failure()
+      - name: Verify APK
+        if: success()
         run: |
-          echo "===== LAST ERROR LINES ====="
-          grep -inE "error:|httperror|403|traceback|exception|no such file|failed" build.log | tail -n 35 || true
-          echo "===== LAST 30 LINES OF BUILD LOG ====="
-          tail -n 30 build.log || true
-
-      - name: Upload build log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-failure-log
-          path: build.log
-          if-no-files-found: ignore
+          find bin -maxdepth 1 -name "*.apk" -print
+          test -n "$(find bin -maxdepth 1 -name '*.apk' -print -quit)"
 
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
+          name: PKPDCL-Spot-Billing-APK
           path: bin/*.apk
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Failure Log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKPDCL-Build-Error-Log
+          path: build.log
+          if-no-files-found: warn
