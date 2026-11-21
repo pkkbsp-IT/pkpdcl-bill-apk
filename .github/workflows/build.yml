@@ -38,12 +38,17 @@ jobs:
                   prefix = match.group(1)
                   body = match.group(2)
                   items = [x.strip() for x in re.split(r"[,\n]", body) if x.strip()]
-                  filtered = [
-                      x for x in items
-                      if x.split("==")[0].split(">=")[0].split("<=")[0].strip().lower() not in blocked
-                  ]
+                  filtered = []
+                  for x in items:
+                      base = x.split("==")[0].split(">=")[0].split("<=")[0].strip().lower()
+                      if base in blocked:
+                          continue
+                      if x.strip().lower() == "kivy==2.3.0":
+                          filtered.append("kivy==2.2.1")
+                      else:
+                          filtered.append(x.strip())
                   if not filtered:
-                      filtered = ["python3", "kivy", "pillow", "pyjnius"]
+                      filtered = ["python3", "kivy==2.2.1", "pillow", "pyjnius"]
                   return prefix + ", ".join(filtered)
 
               text = re.sub(r"(requirements\s*=\s*)([^\n]+(?:\n[ \t]+[^\n]+)*)", clean_req, text)
@@ -52,8 +57,6 @@ jobs:
               for line in text.splitlines():
                   if line.strip().startswith("requirements"):
                       print(" ", line)
-          else:
-              print("buildozer.spec not found")
           EOF
 
       - name: Set up Python
@@ -66,7 +69,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y git zip unzip curl ca-certificates openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
           python3 -m pip install --upgrade pip
-          python3 -m pip install buildozer==1.6.0 cython==0.29.36 virtualenv
+          python3 -m pip install "cython<3" buildozer==1.6.0 virtualenv
 
       - name: Cache Buildozer and Gradle
         uses: actions/cache@v4
@@ -74,9 +77,9 @@ jobs:
           path: |
             ~/.buildozer
             ~/.gradle
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-${{ runner.os }}-kivy221-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-${{ runner.os }}-
+            buildozer-${{ runner.os }}-kivy221-
 
       - name: Build debug APK
         run: |
