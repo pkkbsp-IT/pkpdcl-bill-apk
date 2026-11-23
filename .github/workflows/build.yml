@@ -1,93 +1,233 @@
-from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.label import Label
-from kivy.uix.textinput import TextInput
-from kivy.uix.button import Button
+name: Build PKPDCL APK
+
+"on":
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip autoconf automake libtool \
+            pkg-config zlib1g-dev libncurses5-dev \
+            libncursesw5-dev libtinfo5 cmake libffi-dev \
+            libssl-dev ccache patch gettext
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            "buildozer==1.5.0" \
+            "Cython==0.29.34" \
+            "setuptools<70" \
+            wheel virtualenv
+
+      - name: Create application
+        run: |
+          mkdir -p apk_source
+
+          cat > apk_source/main.py <<'PY'
+          import math
+
+          from kivy.app import App
+          from kivy.metrics import dp
+          from kivy.uix.boxlayout import BoxLayout
+          from kivy.uix.button import Button
+          from kivy.uix.label import Label
+          from kivy.uix.scrollview import ScrollView
+          from kivy.uix.textinput import TextInput
 
 
-class BillCalculatorLayout(BoxLayout):
-    def __init__(self, **kwargs):
-        super().__init__(
-            orientation="vertical",
-            padding=24,
-            spacing=14,
-            **kwargs
-        )
+          class BillCalculatorLayout(BoxLayout):
+              def __init__(self, **kwargs):
+                  super().__init__(
+                      orientation="vertical",
+                      padding=dp(20),
+                      spacing=dp(14),
+                      size_hint_y=None,
+                      **kwargs
+                  )
+                  self.bind(minimum_height=self.setter("height"))
 
-        self.add_widget(
-            Label(
-                text="PKPDCL बिल कैलकुलेटर",
-                font_size="24sp",
-                size_hint_y=None,
-                height=60,
-            )
-        )
+                  self.add_widget(
+                      Label(
+                          text="PKPDCL Bill Calculator",
+                          font_size="22sp",
+                          size_hint_y=None,
+                          height=dp(60),
+                      )
+                  )
 
-        self.units_input = TextInput(
-            hint_text="यूनिट दर्ज करें (जैसे 120)",
-            input_filter="float",
-            multiline=False,
-            font_size="18sp",
-            size_hint_y=None,
-            height=60,
-        )
-        self.add_widget(self.units_input)
+                  self.units_input = TextInput(
+                      hint_text="Units dalein (jaise 120)",
+                      input_filter="float",
+                      multiline=False,
+                      font_size="18sp",
+                      size_hint_y=None,
+                      height=dp(60),
+                  )
+                  self.add_widget(self.units_input)
 
-        self.rate_input = TextInput(
-            hint_text="प्रति यूनिट दर दर्ज करें (जैसे 6.5)",
-            input_filter="float",
-            multiline=False,
-            font_size="18sp",
-            size_hint_y=None,
-            height=60,
-        )
-        self.add_widget(self.rate_input)
+                  self.rate_input = TextInput(
+                      hint_text="Rate dalein (jaise 6.5)",
+                      input_filter="float",
+                      multiline=False,
+                      font_size="18sp",
+                      size_hint_y=None,
+                      height=dp(60),
+                  )
+                  self.add_widget(self.rate_input)
 
-        calc_btn = Button(
-            text="बिल कैलकुलेट करें",
-            font_size="18sp",
-            size_hint_y=None,
-            height=65,
-        )
-        calc_btn.bind(on_release=self.calculate_bill)
-        self.add_widget(calc_btn)
+                  row = BoxLayout(
+                      spacing=dp(10),
+                      size_hint_y=None,
+                      height=dp(60),
+                  )
 
-        self.result_label = Label(
-            text="कुल बिल: ₹0.00",
-            font_size="22sp",
-            size_hint_y=None,
-            height=70,
-        )
-        self.add_widget(self.result_label)
+                  calculate_button = Button(text="Calculate Bill")
+                  calculate_button.bind(on_release=self.calculate_bill)
+                  row.add_widget(calculate_button)
 
-    def calculate_bill(self, instance):
-        units_text = self.units_input.text.strip()
-        rate_text = self.rate_input.text.strip()
+                  clear_button = Button(text="Clear")
+                  clear_button.bind(on_release=self.clear_fields)
+                  row.add_widget(clear_button)
 
-        if not units_text or not rate_text:
-            self.result_label.text = "कृपया यूनिट और दर दोनों भरें"
-            return
+                  self.add_widget(row)
 
-        try:
-            units = float(units_text)
-            rate = float(rate_text)
+                  self.result_label = Label(
+                      text="Total Bill: Rs. 0.00",
+                      font_size="20sp",
+                      size_hint_y=None,
+                      height=dp(90),
+                      halign="center",
+                      valign="middle",
+                  )
+                  self.result_label.bind(
+                      size=lambda widget, size: setattr(
+                          widget, "text_size", size
+                      )
+                  )
+                  self.add_widget(self.result_label)
 
-            if units < 0 or rate < 0:
-                self.result_label.text = "नेगेटिव संख्या अनुमति नहीं है"
-                return
+              def calculate_bill(self, instance):
+                  units_text = self.units_input.text.strip()
+                  rate_text = self.rate_input.text.strip()
 
-            total = units * rate
-            self.result_label.text = f"कुल बिल: ₹{total:,.2f}"
+                  if not units_text or not rate_text:
+                      self.result_label.text = "Units aur rate dono bharein"
+                      return
 
-        except ValueError:
-            self.result_label.text = "कृपया सही संख्या दर्ज करें"
+                  try:
+                      units = float(units_text)
+                      rate = float(rate_text)
+
+                      if (
+                          not math.isfinite(units)
+                          or not math.isfinite(rate)
+                          or units < 0
+                          or rate < 0
+                      ):
+                          raise ValueError
+
+                      total = units * rate
+
+                      if not math.isfinite(total):
+                          raise ValueError
+
+                      self.result_label.text = (
+                          f"Total Bill: Rs. {total:,.2f}"
+                      )
+                  except (ValueError, OverflowError):
+                      self.result_label.text = "Sahi number dalein"
+
+              def clear_fields(self, instance):
+                  self.units_input.text = ""
+                  self.rate_input.text = ""
+                  self.result_label.text = "Total Bill: Rs. 0.00"
 
 
-class PKPDCLBillApp(App):
-    def build(self):
-        self.title = "PKPDCL बिल ऐप"
-        return BillCalculatorLayout()
+          class PKPDCLBillApp(App):
+              def build(self):
+                  self.title = "PKPDCL Bill App"
+                  root = ScrollView(do_scroll_x=False)
+                  root.add_widget(BillCalculatorLayout())
+                  return root
 
 
-if __name__ == "__main__":
-    PKPDCLBillApp().run()
+          if __name__ == "__main__":
+              PKPDCLBillApp().run()
+          PY
+
+      - name: Create Buildozer configuration
+        run: |
+          cat > buildozer.spec <<'SPEC'
+          [app]
+          title = PKPDCL Bill App
+          package.name = pkpdclbill
+          package.domain = org.pkpdcl
+          source.dir = apk_source
+          source.include_exts = py,png,jpg,jpeg,kv,atlas
+          version = 1.0.0
+          requirements = python3,kivy==2.3.0
+          orientation = portrait
+          fullscreen = 0
+
+          android.api = 33
+          android.minapi = 21
+          android.ndk = 25b
+          android.archs = arm64-v8a
+          android.accept_sdk_license = True
+          android.debug_artifact = apk
+
+          p4a.branch = v2024.01.21
+
+          [buildozer]
+          log_level = 2
+          warn_on_root = 0
+          SPEC
+
+      - name: Build debug APK
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee build.log
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKPDCL-Bill-APK
+          path: bin/*.apk
+          if-no-files-found: error
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKPDCL-Build-Log
+          path: build.log
+          if-no-files-found: ignore
